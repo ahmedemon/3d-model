@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurum — Live 3D Jewellery Try-On</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { serif: ['"Playfair Display"','serif'], sans: ['Inter','sans-serif'] },
+  colors: { gold: { 200:'#f9ecc0', 300:'#f0d472', 400:'#d9b34a', 500:'#c69a33' } }
+}}};
+</script>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { -webkit-font-smoothing: antialiased; background: #07070a; color: #e7e7ea; font-family: Inter, sans-serif; overflow: hidden; }
+  #canvas { display: block; width: 100%; height: 100%; }
+  .thin-scroll::-webkit-scrollbar { width: 6px; }
+  .thin-scroll::-webkit-scrollbar-thumb { background:#2a2a38; border-radius:6px; }
+  .piece-card { transition: all .15s ease; cursor: pointer; }
+  .piece-card:hover { background: rgba(255,255,255,.06); }
+  .piece-card.active { border-color: rgba(240,212,114,.7); background: rgba(240,212,114,.08); box-shadow: 0 0 0 1px rgba(240,212,114,.35); }
+  .piece-card.active .piece-dot { opacity: 1; }
+  .piece-dot { opacity: 0; transition: opacity .15s; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { animation: spin 1s linear infinite; }
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  .fade-in { animation: fadeIn .3s ease; }
+</style>
+</head>
+<body>
+
+<div class="flex h-screen">
+
+  <!-- ══════════ LEFT : CATALOG ══════════ -->
+  <aside class="w-[300px] shrink-0 flex flex-col border-r border-white/10 bg-[#0b0b11]">
+    <div class="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+      <div class="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-gold-200 to-gold-500 font-serif text-base font-semibold text-black">A</div>
+      <div class="leading-tight">
+        <h1 class="font-serif text-[15px] text-white">Aurum <span class="text-gold-300">Live</span></h1>
+        <p class="text-[10px] uppercase tracking-[0.15em] text-neutral-500">3D jewellery try-on</p>
+      </div>
+    </div>
+
+    <div id="catalog" class="thin-scroll flex-1 overflow-y-auto p-3 space-y-5"></div>
+
+    <div class="border-t border-white/10 p-3 space-y-2">
+      <button id="btnCapture"
+        class="w-full rounded-lg bg-gradient-to-b from-gold-200 to-gold-500 py-2 text-[12px] font-semibold text-black shadow-lg shadow-gold-500/20 transition hover:brightness-110 active:scale-[.98]">
+        Capture look
+      </button>
+      <p class="text-[10px] leading-relaxed text-neutral-600">
+        Powered by MediaPipe Face Landmarker · Three.js 3D · 100% on-device
+      </p>
+    </div>
+  </aside>
+
+  <!-- ══════════ MAIN : STAGE ══════════ -->
+  <main class="relative flex-1 bg-black">
+    <div id="stage" class="absolute inset-0 grid place-items-center">
+      <div id="stageInner" class="relative w-full h-full">
+        <canvas id="canvas"></canvas>
+
+        <!-- Start overlay -->
+        <div id="overlayStart"
+             class="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-gradient-to-b from-[#0e1018] via-[#0a0b10] to-[#07070a] text-center px-6">
+          <div class="grid h-16 w-16 place-items-center rounded-2xl bg-gradient-to-br from-gold-200 to-gold-500 shadow-2xl shadow-gold-500/20">
+            <svg class="h-8 w-8 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-serif text-2xl text-white">Try on jewellery live</h2>
+            <p class="mt-1.5 max-w-sm text-[13px] text-neutral-400">
+              Your camera stays on your device. Jewellery will snap to your face in real time.
+            </p>
+          </div>
+          <button id="btnStart"
+            class="rounded-xl bg-gradient-to-b from-gold-200 to-gold-500 px-6 py-3 text-sm font-semibold text-black shadow-xl shadow-gold-500/25 transition hover:brightness-110 active:scale-[.97]">
+            Start camera
+          </button>
+        </div>
+
+        <!-- Loading overlay -->
+        <div id="overlayLoading"
+             class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/85 backdrop-blur-sm">
+          <div class="spinner h-10 w-10 rounded-full border-2 border-gold-300 border-t-transparent"></div>
+          <p id="loadingText" class="text-sm text-neutral-300">Starting camera…</p>
+        </div>
+
+        <!-- Status pill -->
+        <div id="statusPill"
+             class="pointer-events-none absolute left-3 top-3 hidden items-center gap-2 rounded-full bg-black/65 px-3 py-1.5 text-[11px] font-medium text-white/85 ring-1 ring-white/10 backdrop-blur-md">
+          <span id="statusDot" class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+          <span id="statusText"></span>
+        </div>
+
+        <!-- Hidden video (source for detection + texture) -->
+        <video id="video" playsinline muted style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"></video>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════════════
+   IMPORTS
+   ═══════════════════════════════════════════════════════════════════ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+let FaceLandmarker = null, FilesetResolver = null;
+try {
+  const mp = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+  ({ FaceLandmarker, FilesetResolver } = mp);
+} catch (e) {
+  console.warn('[Aurum] MediaPipe unavailable:', e);
+}
+
+const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const MP_WASM    = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+
+const $ = s => document.querySelector(s);
+
+/* ═══════════════════════════════════════════════════════════════════
+   CATALOG
+   ═══════════════════════════════════════════════════════════════════ */
+const CATEGORIES = [
+  { key: 'earrings', label: 'Earrings',   icon: '◈' },
+  { key: 'necklace', label: 'Necklaces',  icon: '◉' },
+  { key: 'tiara',    label: 'Tiaras',     icon: '♛' },
+];
+
+const PIECES = {
+  earrings: [
+    { id: 'studs', name: 'Diamond Studs',   price: 1290, color: '#a9d8f7' },
+    { id: 'hoops', name: 'Gold Hoops',      price: 890,  color: '#f0d472' },
+    { id: 'drops', name: 'Chandelier Drops',price: 4290, color: '#dff2ff' },
+  ],
+  necklace: [
+    { id: 'pendant', name: 'Solitaire Pendant', price: 2499, color: '#dff2ff' },
+    { id: 'pearl',   name: 'Pearl Strand',      price: 1899, color: '#f6efe6' },
+    { id: 'choker',  name: 'Gold Choker',       price: 3150, color: '#f0d472' },
+  ],
+  tiara: [
+    { id: 'crystal', name: 'Crystal Tiara', price: 8800, color: '#dff2ff' },
+    { id: 'pearltiara', name: 'Pearl Crown', price: 6400, color: '#f6efe6' },
+  ],
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════════════════════════════ */
+const S = {
+  active: { earrings: null, necklace: null, tiara: null },
+  groups: { earrings: null, necklace: null, tiara: null },
+  latestFace: null,
+  video: null,
+  faceLandmarker: null,
+  running: false,
+  lastDetectTime: 0,
+  detecting: false,
+  lastFaceSeen: 0,
+  videoAspect: 1,
+  videoPlaneW: 1,
+  videoPlaneH: 1,
+  renderer: null,
+  scene: null,
+  camera: null,
+  videoMesh: null,
+  videoTexture: null,
+  envMap: null,
+  materials: null,
+  smoothQuat: new THREE.Quaternion(),
+  smoothPos: new THREE.Vector3(),
+  stageAspect: 1,
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   THREE.JS SETUP
+   ═══════════════════════════════════════════════════════════════════ */
+const canvas = $('#canvas');
+const renderer = new THREE.WebGLRenderer({
+  canvas, alpha: true, antialias: true,
+  preserveDrawingBuffer: true
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+S.renderer = renderer;
+
+const scene = new THREE.Scene();
+S.scene = scene;
+
+const camera = new THREE.PerspectiveCamera(58, 1, 0.01, 100);
+camera.position.z = 0.5 / Math.tan((58 * Math.PI / 180) / 2); // ≈ 0.907
+S.camera = camera;
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const key = new THREE.DirectionalLight(0xffffff, 2.4);
+key.position.set(1.2, 2.2, 3);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xffe6a8, 1.8);
+rim.position.set(-2, 1.4, 1.5);
+scene.add(rim);
+const fill = new THREE.DirectionalLight(0xc8d4ff, 0.9);
+fill.position.set(0.5, -1, 2);
+scene.add(fill);
+
+/* Environment map for realistic gold reflections */
+function buildEnvMap() {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envScene = new THREE.Scene();
+
+  const skyGeo = new THREE.SphereGeometry(8, 32, 16);
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+      topColor:    { value: new THREE.Color(0xfff8e2) },
+      midColor:    { value: new THREE.Color(0x5a4a38) },
+      bottomColor: { value: new THREE.Color(0x0c0e16) },
+    },
+    vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec3 vP;
+      uniform vec3 topColor, midColor, bottomColor;
+      void main(){
+        float h = normalize(vP).y * 0.5 + 0.5;
+        vec3 c = h > 0.5
+          ? mix(midColor, topColor, (h - 0.5) * 2.0)
+          : mix(bottomColor, midColor, h * 2.0);
+        gl_FragColor = vec4(c, 1.0);
+      }`
+  });
+  envScene.add(new THREE.Mesh(skyGeo, skyMat));
+
+  // Bright light sources → sharp specular highlights on gold
+  const bright = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const lightSpheres = [
+    [ 3,  4,  2, 0.55],
+    [-4,  2, -2, 0.45],
+    [ 0,  5,  4, 0.35],
+    [ 2, -3,  3, 0.25],
+  ];
+  for (const [x,y,z,r] of lightSpheres) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 12), bright);
+    m.position.set(x, y, z);
+    envScene.add(m);
+  }
+
+  const tex = pmrem.fromScene(envScene, 0.02).texture;
+  pmrem.dispose();
+  return tex;
+}
+
+S.envMap = buildEnvMap();
+scene.environment = S.envMap;
+
+/* Materials (PBR) */
+S.materials = {
+  gold: new THREE.MeshStandardMaterial({
+    color: 0xffcc55, metalness: 1, roughness: 0.14,
+    envMap: S.envMap, envMapIntensity: 1.6,
+  }),
+  goldBright: new THREE.MeshStandardMaterial({
+    color: 0xffe4a0, metalness: 1, roughness: 0.06,
+    envMap: S.envMap, envMapIntensity: 2.2,
+  }),
+  diamond: new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, metalness: 0.15, roughness: 0.03,
+    transmission: 0.9, thickness: 0.04, ior: 2.4,
+    envMap: S.envMap, envMapIntensity: 2.6,
+    clearcoat: 1, clearcoatRoughness: 0,
+  }),
+  pearl: new THREE.MeshStandardMaterial({
+    color: 0xfff8ee, metalness: 0.08, roughness: 0.3,
+    envMap: S.envMap, envMapIntensity: 1.1,
+  }),
+  sapphire: new THREE.MeshPhysicalMaterial({
+    color: 0x4a7fd4, metalness: 0.2, roughness: 0.05,
+    transmission: 0.7, thickness: 0.04, ior: 1.77,
+    envMap: S.envMap, envMapIntensity: 2.2,
+  }),
+};
+
+/* Resize */
+function resize() {
+  const rect = $('#stageInner').getBoundingClientRect();
+  const w = Math.max(1, rect.width);
+  const h = Math.max(1, rect.height);
+  renderer.setSize(w, h, false);
+  S.stageAspect = w / h;
+  camera.aspect = S.stageAspect;
+  camera.updateProjectionMatrix();
+  if (S.videoMesh) updateVideoPlaneSize();
+}
+new ResizeObserver(resize).observe($('#stageInner'));
+resize();
+
+/* ═══════════════════════════════════════════════════════════════════
+   VIDEO PLANE (fills stage like `object-fit: cover`)
+   ═══════════════════════════════════════════════════════════════════ */
+function updateVideoPlaneSize() {
+  if (!S.videoMesh || !S.videoAspect) return;
+  const stageAspect = S.stageAspect;
+  const k = Math.max(1, stageAspect / S.videoAspect);
+  S.videoPlaneW = S.videoAspect * k;
+  S.videoPlaneH = k;
+  S.videoMesh.geometry.dispose();
+  S.videoMesh.geometry = new THREE.PlaneGeometry(S.videoPlaneW, S.videoPlaneH);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   JEWELLERY 3D BUILDERS
+   All geometry is built for a "reference face width" of 0.2 world units.
+   The whole group is later scaled to match the real face width.
+   ═══════════════════════════════════════════════════════════════════ */
+
+function buildEarrings(id) {
+  const group = new THREE.Group();
+  const { gold, goldBright, diamond, pearl, sapphire } = S.materials;
+
+  const makeOne = () => {
+    const g = new THREE.Group();
+    if (id === 'studs') {
+      const stone = new THREE.Mesh(new THREE.OctahedronGeometry(0.012, 1), diamond);
+      stone.scale.set(1, 1, 0.7);
+      g.add(stone);
+      const prong = new THREE.Mesh(new THREE.TorusGeometry(0.012, 0.0015, 6, 16), gold);
+      prong.rotation.x = Math.PI / 2;
+      g.add(prong);
+    } else if (id === 'hoops') {
+      // Hook
+      const hook = new THREE.Mesh(new THREE.TorusGeometry(0.008, 0.0015, 6, 16, Math.PI), goldBright);
+      hook.position.y = 0;
+      g.add(hook);
+      // Hoop
+      const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.004, 10, 40), gold);
+      hoop.position.y = -0.04;
+      g.add(hoop);
+      // Small diamond at bottom of hoop
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.006, 0), diamond);
+      gem.position.y = -0.07;
+      g.add(gem);
+    } else if (id === 'drops') {
+      // Top stud
+      const top = new THREE.Mesh(new THREE.SphereGeometry(0.008, 12, 12), goldBright);
+      g.add(top);
+      // Chain of small gems
+      for (let i = 0; i < 3; i++) {
+        const bead = new THREE.Mesh(new THREE.OctahedronGeometry(0.006, 0), diamond);
+        bead.position.y = -0.015 - i * 0.02;
+        g.add(bead);
+        const link = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, 0.008, 6), gold);
+        link.position.y = -0.015 - i * 0.02 + 0.01;
+        g.add(link);
+      }
+      // Bottom drop gem
+      const drop = new THREE.Mesh(new THREE.OctahedronGeometry(0.014, 0), sapphire);
+      drop.position.y = -0.09;
+      drop.scale.set(1, 1.5, 1);
+      g.add(drop);
+      // Gold cap
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.008, 0.008, 8), gold);
+      cap.position.y = -0.075;
+      cap.rotation.x = Math.PI;
+      g.add(cap);
+    }
+    return g;
+  };
+
+  const left = makeOne();
+  const right = makeOne();
+  left.userData.side = 'L';
+  right.userData.side = 'R';
+  group.add(left, right);
+  group.userData.left = left;
+  group.userData.right = right;
+  return group;
+}
+
+function buildNecklace(id) {
+  const group = new THREE.Group();
+  const { gold, goldBright, diamond, pearl } = S.materials;
+  const R = 0.14;              // arc radius (≈0.7× reference face width)
+  const N = 40;                // bead count
+  const arcAngle = Math.PI;    // half-circle
+
+  if (id === 'pendant' || id === 'choker') {
+    // Fine chain of small gold links
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1);
+      const theta = Math.PI * t;
+      const x = -Math.cos(theta) * R;
+      const y = -Math.sin(theta) * R;
+      const z = Math.sin(theta) * 0.02;  // curve forward at bottom
+      const bead = new THREE.Mesh(new THREE.SphereGeometry(0.0035, 8, 8), gold);
+      bead.position.set(x, y, z);
+      group.add(bead);
+    }
+    if (id === 'pendant') {
+      // Chain links converging to a central pendant
+      const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.0018, 0.0018, 0.03, 6), goldBright);
+      strap.position.set(0, -R - 0.015, 0.02);
+      group.add(strap);
+      // Diamond pendant
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.022, 1), diamond);
+      gem.position.set(0, -R - 0.05, 0.025);
+      gem.scale.set(0.85, 1.3, 0.85);
+      group.add(gem);
+      // Halo ring
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(0.022, 0.0028, 8, 32), goldBright);
+      halo.position.copy(gem.position);
+      halo.position.y += 0.001;
+      halo.rotation.x = Math.PI / 2;
+      group.add(halo);
+    } else {
+      // Choker — thicker, tighter, with a small charm at bottom
+      group.children.forEach(c => c.scale.set(1.3, 1.3, 1.3));
+      const charm = new THREE.Mesh(new THREE.TorusGeometry(0.015, 0.004, 8, 24), goldBright);
+      charm.position.set(0, -R - 0.005, 0.02);
+      group.add(charm);
+    }
+  } else if (id === 'pearl') {
+    // Pearl strand — larger beads
+    for (let i = 0; i < 32; i++) {
+      const t = i / 31;
+      const theta = Math.PI * t;
+      const x = -Math.cos(theta) * R;
+      const y = -Math.sin(theta) * R;
+      const z = Math.sin(theta) * 0.025;
+      const bead = new THREE.Mesh(new THREE.SphereGeometry(0.009, 14, 14), pearl);
+      bead.position.set(x, y, z);
+      group.add(bead);
+    }
+    // Central larger pearl
+    const center = new THREE.Mesh(new THREE.SphereGeometry(0.014, 16, 16), pearl);
+    center.position.set(0, -R - 0.015, 0.03);
+    group.add(center);
+    // Gold clasp at top
+    const clasp = new THREE.Mesh(new THREE.SphereGeometry(0.008, 10, 10), goldBright);
+    clasp.position.set(0, 0.005, 0);
+    group.add(clasp);
+  }
+
+  return group;
+}
+
+function buildTiara(id) {
+  const group = new THREE.Group();
+  const { gold, goldBright, diamond, pearl } = S.materials;
+  const R = 0.16;
+  const N = id === 'crystal' ? 15 : 13;
+  const arcAngle = Math.PI * 0.85;
+
+  // Band / base arc
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    const theta = -arcAngle / 2 + t * arcAngle;
+    const x = Math.sin(theta) * R;
+    const y = Math.cos(theta) * R - R + 0.012;
+    const z = -Math.sin(theta) * 0.008; // curve back at the sides
+    if (id === 'crystal') {
+      // Crystal beads
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.008, 0), diamond);
+      gem.position.set(x, y + 0.005, z);
+      group.add(gem);
+      // Small gold connectors
+      if (i < N - 1) {
+        const conn = new THREE.Mesh(new THREE.SphereGeometry(0.0025, 6, 6), goldBright);
+        conn.position.set(x, y, z);
+        group.add(conn);
+      }
+    } else {
+      // Pearl crown
+      const p = new THREE.Mesh(new THREE.SphereGeometry(0.007, 12, 12), pearl);
+      p.position.set(x, y + 0.004, z);
+      group.add(p);
+    }
+  }
+
+  // Central spire (taller center piece)
+  const centerX = 0, centerY = R - R + 0.012; // = 0.012 above base at theta=0
+  // Base spike
+  const spike = new THREE.Mesh(new THREE.CylinderGeometry(0.002, 0.004, 0.03, 8), goldBright);
+  spike.position.set(centerX, centerY + 0.018, 0);
+  group.add(spike);
+  // Large central gem
+  const bigGem = new THREE.Mesh(
+    id === 'crystal'
+      ? new THREE.OctahedronGeometry(0.018, 1)
+      : new THREE.SphereGeometry(0.014, 16, 16),
+    id === 'crystal' ? diamond : pearl
+  );
+  bigGem.position.set(centerX, centerY + 0.045, 0);
+  bigGem.scale.set(1, 1.4, 1);
+  group.add(bigGem);
+  // Gold cap holding the gem
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.008, 0.012, 8), gold);
+  cap.position.set(centerX, centerY + 0.028, 0);
+  cap.rotation.x = Math.PI;
+  group.add(cap);
+
+  return group;
+}
+
+/* Public builder dispatcher */
+function buildPiece(category, id) {
+  if (category === 'earrings') return buildEarrings(id);
+  if (category === 'necklace') return buildNecklace(id);
+  if (category === 'tiara')    return buildTiara(id);
+  return null;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CATALOG UI
+   ═══════════════════════════════════════════════════════════════════ */
+function renderCatalog() {
+  const container = $('#catalog');
+  container.innerHTML = CATEGORIES.map(cat => `
+    <div>
+      <div class="flex items-center gap-2 px-1 mb-2">
+        <span class="text-gold-300 text-[11px]">${cat.icon}</span>
+        <h3 class="text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-400">${cat.label}</h3>
+      </div>
+      <div class="space-y-1.5">
+        ${PIECES[cat.key].map(p => `
+          <button data-cat="${cat.key}" data-id="${p.id}"
+            class="piece-card w-full flex items-center gap-2.5 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2 text-left active:scale-[.98]">
+            <div class="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-black/40 ring-1 ring-white/10">
+              <div class="h-4 w-4 rounded-full" style="background: ${p.color}; box-shadow: 0 0 8px ${p.color}88"></div>
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-[12px] font-medium text-neutral-200">${p.name}</p>
+              <p class="text-[10px] text-gold-300">$${p.price.toLocaleString()}</p>
+            </div>
+            <div class="piece-dot h-1.5 w-1.5 rounded-full bg-gold-300"></div>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  container.addEventListener('click', e => {
+    const btn = e.target.closest('.piece-card');
+    if (!btn) return;
+    const { cat, id } = btn.dataset;
+    togglePiece(cat, id);
+  });
+}
+
+function togglePiece(category, id) {
+  if (S.active[category] === id) {
+    S.active[category] = null;
+  } else {
+    S.active[category] = id;
+  }
+  rebuildCategory(category);
+  updateCatalogHighlight();
+}
+
+function rebuildCategory(category) {
+  if (S.groups[category]) {
+    S.scene.remove(S.groups[category]);
+    disposeGroup(S.groups[category]);
+    S.groups[category] = null;
+  }
+  const id = S.active[category];
+  if (!id) return;
+  const group = buildPiece(category, id);
+  group.visible = false; // revealed once a face is detected
+  S.scene.add(group);
+  S.groups[category] = group;
+}
+
+function disposeGroup(g) {
+  g.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    // Materials are shared, don't dispose
+  });
+}
+
+function updateCatalogHighlight() {
+  document.querySelectorAll('.piece-card').forEach(btn => {
+    const active = S.active[btn.dataset.cat] === btn.dataset.id;
+    btn.classList.toggle('active', active);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CAMERA + MEDIAPIPE INIT
+   ═══════════════════════════════════════════════════════════════════ */
+async function startCamera() {
+  $('#overlayStart').classList.add('hidden');
+  $('#overlayLoading').classList.remove('hidden');
+  setLoadingText('Requesting camera…');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } },
+      audio: false,
+    });
+
+    const video = $('#video');
+    video.srcObject = stream;
+    await video.play();
+    S.video = video;
+    S.videoAspect = video.videoWidth / video.videoHeight;
+
+    setLoadingText('Building 3D video texture…');
+
+    // Build video mesh (added to scene, but the HTML <video> is what MediaPipe reads)
+    const videoTexture = new THREE.VideoTexture(video);
+    videoTexture.colorSpace = THREE.SRGBColorSpace;
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+    S.videoTexture = videoTexture;
+
+    const videoMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: videoTexture })
+    );
+    videoMesh.position.z = 0;
+    S.videoMesh = videoMesh;
+    S.scene.add(videoMesh);
+    updateVideoPlaneSize();
+
+    setLoadingText('Loading AI face model…');
+
+    if (!FaceLandmarker) throw new Error('MediaPipe failed to load');
+
+    const vision = await FilesetResolver.forVisionTasks(MP_WASM);
+    const make = delegate => FaceLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: FACE_MODEL, delegate },
+      runningMode: 'LIVE_STREAM',
+      numFaces: 1,
+      outputFacialTransformationMatrixes: true,
+      resultCallback: (result) => {
+        S.latestFace = result;
+        if (result.faceLandmarks && result.faceLandmarks[0]) {
+          S.lastFaceSeen = performance.now();
+        }
+      }
+    });
+
+    try {
+      S.faceLandmarker = await make('GPU');
+    } catch {
+      S.faceLandmarker = await make('CPU');
+    }
+
+    $('#overlayLoading').classList.add('hidden');
+    S.running = true;
+    setStatus('Face tracking active', 'ok');
+    setTimeout(() => setStatus(''), 2600);
+
+    startLoop();
+  } catch (err) {
+    console.error(err);
+    $('#overlayLoading').classList.add('hidden');
+    $('#overlayStart').classList.remove('hidden');
+    alert('Camera failed: ' + (err.message || err));
+  }
+}
+
+function setLoadingText(t) { $('#loadingText').textContent = t; }
+
+function setStatus(text, tone = 'info') {
+  const el = $('#statusPill');
+  if (!text) { el.classList.add('hidden'); el.classList.remove('flex'); return; }
+  el.classList.remove('hidden'); el.classList.add('flex');
+  $('#statusText').textContent = text;
+  const dot = $('#statusDot');
+  dot.className = 'h-1.5 w-1.5 rounded-full ' +
+    (tone === 'ok' ? 'bg-emerald-400' : tone === 'warn' ? 'bg-amber-400' : 'bg-gold-300');
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   LANDMARK → WORLD
+   ═══════════════════════════════════════════════════════════════════ */
+function landmarkToWorld(lm) {
+  return {
+    x: (lm.x - 0.5) * S.videoPlaneW,
+    y: (0.5 - lm.y) * S.videoPlaneH,
+    z: -(lm.z || 0) * S.videoPlaneH * 0.4,
+  };
+}
+
+function faceWidthWorld(lm) {
+  const L = lm[234], R = lm[454];
+  return Math.hypot(
+    (R.x - L.x) * S.videoPlaneW,
+    (R.y - L.y) * S.videoPlaneH
+  );
+}
+
+/* Head quaternion — decomposed from MediaPipe's facial transformation matrix.
+   This gives real 3D yaw / pitch / roll of the head. */
+const _m4 = new THREE.Matrix4();
+const _pos = new THREE.Vector3();
+const _scl = new THREE.Vector3();
+const _quat = new THREE.Quaternion();
+
+function headQuaternion(faceResult) {
+  const mats = faceResult.facialTransformationMatrixes;
+  if (!mats || !mats[0]) return null;
+  _m4.fromArray(mats[0].data);
+  _m4.decompose(_pos, _quat, _scl);
+  return _quat;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   PER-FRAME PIECE UPDATE
+   ═══════════════════════════════════════════════════════════════════ */
+const REF_FACE_W = 0.20;   // reference face width the geometry is built for
+const _tmpQ = new THREE.Quaternion();
+
+function updatePieces() {
+  const face = S.latestFace;
+  const now = performance.now();
+  const hasFace = face && face.faceLandmarks && face.faceLandmarks[0] &&
+                  (now - S.lastFaceSeen < 700);
+
+  // Hide if no face
+  if (!hasFace) {
+    for (const key of Object.keys(S.groups)) {
+      if (S.groups[key]) S.groups[key].visible = false;
+    }
+    return;
+  }
+
+  const lm = face.faceLandmarks[0];
+  const fw = faceWidthWorld(lm);
+  const scaleFactor = fw / REF_FACE_W;
+
+  // Smoothed head rotation
+  const q = headQuaternion(face);
+  if (q) {
+    S.smoothQuat.slerp(q, 0.35);
+  }
+
+  // ── NECKLACE ────────────────────────────────────────────────────
+  if (S.groups.necklace) {
+    const g = S.groups.necklace;
+    const chin = landmarkToWorld(lm[152]);
+    g.position.set(chin.x, chin.y - fw * 0.38, 0.02);
+    g.quaternion.copy(S.smoothQuat);
+    g.scale.setScalar(scaleFactor);
+    g.visible = true;
+  }
+
+  // ── EARRINGS (paired) ───────────────────────────────────────────
+  if (S.groups.earrings) {
+    const g = S.groups.earrings;
+    const leftEar  = landmarkToWorld(lm[234]);
+    const rightEar = landmarkToWorld(lm[454]);
+    const sideOffset = fw * 0.02;
+
+    const L = g.userData.left, R = g.userData.right;
+    // "left" in mirror-space = person's right ear (MediaPipe idx 234)
+    L.position.set(leftEar.x - sideOffset, leftEar.y - fw * 0.02, 0.02);
+    R.position.set(rightEar.x + sideOffset, rightEar.y - fw * 0.02, 0.02);
+    L.quaternion.copy(S.smoothQuat);
+    R.quaternion.copy(S.smoothQuat);
+    L.scale.setScalar(scaleFactor);
+    R.scale.setScalar(scaleFactor);
+    g.visible = true;
+  }
+
+  // ── TIARA ───────────────────────────────────────────────────────
+  if (S.groups.tiara) {
+    const g = S.groups.tiara;
+    const forehead = landmarkToWorld(lm[10]);
+    g.position.set(forehead.x, forehead.y + fw * 0.10, 0.02);
+    g.quaternion.copy(S.smoothQuat);
+    g.scale.setScalar(scaleFactor);
+    g.visible = true;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MAIN LOOP
+   ═══════════════════════════════════════════════════════════════════ */
+function startLoop() {
+  function loop() {
+    requestAnimationFrame(loop);
+
+    // Run detection throttled to ~30 fps
+    if (S.running && S.faceLandmarker && S.video && S.video.readyState >= 2) {
+      const now = performance.now();
+      if (!S.detecting && now - S.lastDetectTime > 33) {
+        S.lastDetectTime = now;
+        S.detecting = true;
+        try {
+          S.faceLandmarker.detectForVideo(S.video, now);
+        } catch (e) { /* swallow */ }
+        S.detecting = false;
+      }
+      if (S.videoTexture) S.videoTexture.needsUpdate = true;
+    }
+
+    updatePieces();
+    S.renderer.render(S.scene, S.camera);
+  }
+  loop();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CAPTURE (composite video + 3D canvas → PNG)
+   ═══════════════════════════════════════════════════════════════════ */
+function capture() {
+  if (!S.video || !S.video.videoWidth) {
+    alert('Start the camera first');
+    return;
+  }
+  const W = S.video.videoWidth;
+  const H = S.video.videoHeight;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Video frame
+  ctx.drawImage(S.video, 0, 0, W, H);
+
+  // 3D overlay (letterboxed into video aspect)
+  const gl = S.renderer.domElement;
+  const vAspect = W / H;
+  const gAspect = gl.width / gl.height;
+  let dx = 0, dy = 0, dw = W, dh = H;
+  if (gAspect > vAspect) {
+    // gl is wider → crop sides
+    dw = H * gAspect;
+    dx = (W - dw) / 2;
+  } else {
+    dh = W / gAspect;
+    dy = (H - dh) / 2;
+  }
+  ctx.drawImage(gl, 0, 0, gl.width, gl.height, dx, dy, dw, dh);
+
+  const a = document.createElement('a');
+  a.download = `aurum-look-${Date.now()}.png`;
+  a.href = c.toDataURL('image/png');
+  a.click();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   WIRING
+   ═══════════════════════════════════════════════════════════════════ */
+$('#btnStart').addEventListener('click', startCamera);
+$('#btnCapture').addEventListener('click', capture);
+
+renderCatalog();
+updateCatalogHighlight();
+
+// Start the render loop immediately so resizing / previews work
+startLoop();
+
+console.log('%c[Aurum] Live 3D try-on ready', 'color:#f0d472');
+</script>
+</body>
+</html>
